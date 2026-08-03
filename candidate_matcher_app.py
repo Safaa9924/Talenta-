@@ -47,7 +47,7 @@ BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 #      الـ repo بتاعك على Hugging Face Hub، زي: "your-username/final-adapter"
 #      وفي الحالة دي الكود هيحمّله مباشرة من الإنترنت من غير ما تحتاج
 #      ترفعه على GitHub خالص.
-ADAPTER_PATH = "models/final_adapter"
+ADAPTER_PATH = "safaa99/cvlora"
 
 
 # -----------------------------------------------------------------------
