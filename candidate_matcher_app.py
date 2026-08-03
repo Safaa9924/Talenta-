@@ -41,9 +41,22 @@ DEFAULT_CANDIDATES_DIR = "data/outputs"  # نفس المجلد اللي بيحف
 # الموديل الأصلي (Base Model) من Hugging Face - نفس اللي عملتله fine-tuning عليه
 BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
-# مسار مجلد الـ Adapter (LoRA) بتاعك - لازم يكون فيه adapter_config.json و
-# adapter_model.safetensors (أو .bin) وملفات التوكنايزر (tokenizer.json, ...)
+# مسار الـ Adapter (LoRA) بتاعك - ممكن يكون:
+#   1) مجلد لوكال جوا المشروع، زي: "models/final_adapter"
+#   2) أو (الأفضل لو الملف كبير ومش راضي يترفع على GitHub) اسم
+#      الـ repo بتاعك على Hugging Face Hub، زي: "your-username/final-adapter"
+#      وفي الحالة دي الكود هيحمّله مباشرة من الإنترنت من غير ما تحتاج
+#      ترفعه على GitHub خالص.
 ADAPTER_PATH = "models/final_adapter"
+
+
+# -----------------------------------------------------------------------
+# توكن الـ Hugging Face (لو الـ Adapter repo بتاعك Private)
+# بنجيبه من Streamlit Secrets (لازم تضيفه في App settings -> Secrets):
+#   HF_TOKEN = "hf_xxxxxxxxxxxxxxxxxxxx"
+# لو الـ repo عندك Public، سيبه فاضي وهيتجاهل التوكن تلقائيًا.
+# -----------------------------------------------------------------------
+HF_TOKEN = st.secrets.get("HF_TOKEN", None)
 
 
 # -----------------------------------------------------------------------
@@ -51,21 +64,22 @@ ADAPTER_PATH = "models/final_adapter"
 # بيحمّل الـ Base Model الأصلي من Hugging Face، ثم بيركّب عليه الـ Adapter (LoRA)
 # -----------------------------------------------------------------------
 @st.cache_resource(show_spinner="⏳ جاري تحميل الموديل... (بيحصل مرة واحدة بس)")
-def load_model(base_model_name: str, adapter_path: str):
-    # التوكنايزر بنحمله من مجلد الـ Adapter (لو محفوظ فيه)، ولو مش موجود
+def load_model(base_model_name: str, adapter_path: str, hf_token: Optional[str] = None):
+    # التوكنايزر بنحمله من مجلد/repo الـ Adapter (لو محفوظ فيه)، ولو مش موجود
     # هنرجع نحمله من الـ Base Model نفسه
     try:
-        tokenizer = AutoTokenizer.from_pretrained(adapter_path)
+        tokenizer = AutoTokenizer.from_pretrained(adapter_path, token=hf_token)
     except Exception:
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name, token=hf_token)
 
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
         device_map="auto",
         trust_remote_code=True,
+        token=hf_token,
     )
 
-    model = PeftModel.from_pretrained(base_model, adapter_path)
+    model = PeftModel.from_pretrained(base_model, adapter_path, token=hf_token)
     model.eval()
     return tokenizer, model
 
@@ -400,7 +414,7 @@ if data_source == "🤖 معالجة سيرة ذاتية جديدة بالمود
 
     if run_button and resume_text:
         try:
-            tokenizer, model = load_model(BASE_MODEL, ADAPTER_PATH)
+            tokenizer, model = load_model(BASE_MODEL, ADAPTER_PATH, HF_TOKEN)
             with st.spinner("🧠 الموديل بيحلل السيرة الذاتية..."):
                 parsed_json = run_resume_extraction(tokenizer, model, resume_text)
             st.session_state["_last_parsed"] = parsed_json
