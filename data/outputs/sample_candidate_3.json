@@ -1,0 +1,12 @@
+{
+  "name": "Omar Khaled",
+  "email": "omar.khaled.demo@example.com",
+  "phone": "+20 100 000 0003",
+  "seniority": "Junior",
+  "skills": ["JavaScript", "React", "Node.js", "HTML", "CSS"],
+  "experience": [
+    {"title": "Frontend Developer Intern", "company": "Demo Web Studio"}
+  ],
+  "education": ["B.Sc. Software Engineering, Demo University"],
+  "certifications": []
+}

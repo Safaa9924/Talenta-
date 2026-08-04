@@ -1,0 +1,13 @@
+{
+  "name": "Sara Youssef",
+  "email": "sara.youssef.demo@example.com",
+  "phone": "+20 100 000 0002",
+  "seniority": "Senior",
+  "skills": ["Python", "Deep Learning", "PyTorch", "NLP", "AWS", "SQL"],
+  "experience": [
+    {"title": "Senior ML Engineer", "company": "Demo AI Labs"},
+    {"title": "Data Scientist", "company": "Demo Analytics Co."}
+  ],
+  "education": ["M.Sc. Artificial Intelligence, Demo University"],
+  "certifications": ["Deep Learning Specialization"]
+}
