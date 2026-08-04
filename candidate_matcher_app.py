@@ -15,16 +15,12 @@ Candidate Skill-Matching Dashboard
 """
 
 import os
-import re
 import json
 import glob
-import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # -----------------------------------------------------------------------
 # Config
@@ -36,125 +32,6 @@ st.set_page_config(
 )
 
 DEFAULT_CANDIDATES_DIR = "data/outputs"  # نفس المجلد اللي بيحفظ فيه inference_engine
-MODEL_PATH = "resume_parser_final_model"  # مسار الموديل اللي عملتله fine-tuning وحفظته
-
-
-# -----------------------------------------------------------------------
-# تحميل الموديل (مرة واحدة بس، ومتخزن في الكاش عشان مايتحملش من جديد كل مرة)
-# -----------------------------------------------------------------------
-@st.cache_resource(show_spinner="⏳ جاري تحميل الموديل... (بيحصل مرة واحدة بس)")
-def load_model(model_path: str):
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    model.eval()
-    return tokenizer, model
-
-
-# -----------------------------------------------------------------------
-# استخراج نص السيرة الذاتية من الملف المرفوع (PDF / DOCX / TXT)
-# -----------------------------------------------------------------------
-def extract_resume_text(uploaded_file) -> str:
-    """بيرجع نص السيرة الذاتية كامل بغض النظر عن الصيغة."""
-    suffix = os.path.splitext(uploaded_file.name)[1].lower()
-
-    if suffix == ".txt":
-        return uploaded_file.read().decode("utf-8", errors="ignore")
-
-    if suffix == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except ImportError:
-            st.error("محتاج تتثبت مكتبة pypdf: pip install pypdf")
-            return ""
-        reader = PdfReader(uploaded_file)
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
-
-    if suffix == ".docx":
-        try:
-            import docx2txt
-        except ImportError:
-            st.error("محتاج تتثبت مكتبة docx2txt: pip install docx2txt")
-            return ""
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-            tmp.write(uploaded_file.read())
-            tmp_path = tmp.name
-        text = docx2txt.process(tmp_path)
-        os.unlink(tmp_path)
-        return text or ""
-
-    st.warning(f"صيغة الملف {suffix} غير مدعومة. استخدم PDF أو DOCX أو TXT.")
-    return ""
-
-
-# -----------------------------------------------------------------------
-# بناء البرومبت وتشغيل الموديل على نص السيرة الذاتية عشان يطلع JSON منظم
-#
-# ⚠️ مهم جدًا: شكل الـ prompt هنا لازم يكون طبق الأصل من الفورمات اللي
-# الموديل شاف وقت التدريب (fine-tuning)، وإلا الموديل هيديك نتايج ضعيفة
-# أو غير منطقية لأنه هيتعامل مع البرومبت كأنه حاجة جديدة عليه.
-#
-# من الـ training cell اللي بعتهولي، شكل الـ INPUT كان بادئ بكلمة "Resume:"
-# ثم النص كامل من غير أي تعديل (حتى لو فيه رموز encoding زي Â أو â€‹).
-# لسه ناقص شكل الـ OUTPUT/label بالظبط (الجزء اللي بعد "Resume:")
-# — لما تبعتهولي، حط الفورمات بتاعه في PROMPT_TEMPLATE تحت.
-# -----------------------------------------------------------------------
-
-# ✏️ عدّل السطر ده لما تعرف شكل الـ output/label المطلوب (مثال: "Category:" أو "JSON:")
-OUTPUT_MARKER = "JSON:"  # TODO: استبدلها بنفس الكلمة اللي كانت مستخدمة وقت التدريب
-
-PROMPT_TEMPLATE = "Resume:\n{resume_text}\n\n" + OUTPUT_MARKER + "\n"
-
-
-def build_prompt(tokenizer, resume_text: str) -> str:
-    """
-    بيبني نفس شكل البرومبت اللي الموديل اتدرب عليه:
-    "Resume:\n<النص>\n\n<OUTPUT_MARKER>\n"
-
-    لو اتضح إن الموديل اتدرب بـ chat template (system/user roles) بدل
-    النص الخام ده، استبدل الفنكشن دي باللي كانت موجودة قبل كده (تحت في التعليق).
-    """
-    return PROMPT_TEMPLATE.format(resume_text=resume_text)
-
-
-# --- نسخة بديلة لو الموديل فعلاً اتدرب بفورمات chat template (system/user) ---
-# def build_prompt(tokenizer, resume_text: str) -> str:
-#     messages = [
-#         {"role": "system", "content": "استخرج بيانات السيرة الذاتية في شكل JSON."},
-#         {"role": "user", "content": f"Resume:\n{resume_text}"},
-#     ]
-#     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
-
-def extract_json_block(text: str) -> Optional[str]:
-    """بياخد أول { لحد آخر } في النص، عشان يتجاهل أي كلام زيادة الموديل طلّعه."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    return match.group(0) if match else None
-
-
-def run_resume_extraction(tokenizer, model, resume_text: str, max_new_tokens: int = 512) -> Dict[str, Any]:
-    prompt = build_prompt(tokenizer, resume_text)
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    generated = output_ids[0][inputs["input_ids"].shape[1]:]
-    raw_output = tokenizer.decode(generated, skip_special_tokens=True)
-
-    json_block = extract_json_block(raw_output)
-    if not json_block:
-        raise ValueError(f"الموديل مرجعش JSON صالح. الناتج الخام:\n{raw_output}")
-
-    return json.loads(json_block)
 
 
 # -----------------------------------------------------------------------
@@ -262,46 +139,31 @@ def load_candidates_from_uploads(uploaded_files) -> List[Dict[str, Any]]:
 
 
 # -----------------------------------------------------------------------
-# تخزين المرشحين اللي اتضافوا عن طريق الموديل مباشرة (تفضل موجودة طول ما الجلسة شغالة)
-# -----------------------------------------------------------------------
-if "model_candidates" not in st.session_state:
-    st.session_state.model_candidates = []  # كل عنصر = candidate بعد normalize_candidate
-
-# -----------------------------------------------------------------------
 # Sidebar: Data source
 # -----------------------------------------------------------------------
 st.sidebar.title("⚙️ إعدادات مصدر البيانات")
 
 data_source = st.sidebar.radio(
-    "من فين هنجيب بيانات المرشحين؟",
-    [
-        "🤖 معالجة سيرة ذاتية جديدة بالموديل",
-        "مجلد على السيرفر (data/outputs)",
-        "رفع ملفات JSON جاهزة",
-    ],
+    "من فين هنجيب ملفات المرشحين (JSON)؟",
+    ["مجلد على السيرفر (data/outputs)", "رفع ملفات يدويًا"],
 )
 
-file_candidates: List[Dict[str, Any]] = []
+candidates: List[Dict[str, Any]] = []
 
 if data_source == "مجلد على السيرفر (data/outputs)":
     candidates_dir = st.sidebar.text_input("مسار المجلد", value=DEFAULT_CANDIDATES_DIR)
-    file_candidates = load_candidates_from_dir(candidates_dir)
-    if not file_candidates:
+    candidates = load_candidates_from_dir(candidates_dir)
+    if not candidates:
         st.sidebar.warning("لم يتم العثور على ملفات JSON في هذا المسار.")
-elif data_source == "رفع ملفات JSON جاهزة":
+else:
     uploaded = st.sidebar.file_uploader(
         "ارفع ملفات JSON (ملف واحد لكل مرشح)", type="json", accept_multiple_files=True
     )
     if uploaded:
-        file_candidates = load_candidates_from_uploads(uploaded)
-
-# كل المرشحين = اللي جايين من ملفات + اللي اتضافوا عن طريق الموديل في الجلسة الحالية
-candidates: List[Dict[str, Any]] = file_candidates + st.session_state.model_candidates
+        candidates = load_candidates_from_uploads(uploaded)
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"عدد المرشحين المحمّلين: **{len(candidates)}**")
-if st.session_state.model_candidates:
-    st.sidebar.caption(f"منهم بالموديل مباشرة: **{len(st.session_state.model_candidates)}**")
 
 # -----------------------------------------------------------------------
 # Main Page
@@ -309,72 +171,8 @@ if st.session_state.model_candidates:
 st.title("🧑‍💻 Candidate Skill-Matching Dashboard")
 st.caption("داشبورد لصاحب الشغل: اختار السكيلز المطلوبة وشوف أفضل المرشحين المتاحين فورًا.")
 
-# =========================================================================
-# قسم 1: معالجة سيرة ذاتية جديدة مباشرة بالموديل
-# =========================================================================
-if data_source == "🤖 معالجة سيرة ذاتية جديدة بالموديل":
-    st.header("📄 خطوة 1: ارفع السيرة الذاتية عشان الموديل يحللها")
-
-    resume_input_mode = st.radio(
-        "طريقة إدخال السيرة الذاتية", ["رفع ملف (PDF / DOCX / TXT)", "لصق النص مباشرة"], horizontal=True
-    )
-
-    resume_text = ""
-    resume_file_name = "resume_pasted.json"
-
-    if resume_input_mode == "رفع ملف (PDF / DOCX / TXT)":
-        resume_file = st.file_uploader("ارفع ملف السيرة الذاتية", type=["pdf", "docx", "txt"])
-        if resume_file is not None:
-            resume_text = extract_resume_text(resume_file)
-            resume_file_name = resume_file.name
-    else:
-        resume_text = st.text_area("الصق نص السيرة الذاتية هنا", height=250)
-
-    if resume_text:
-        with st.expander("👀 معاينة النص المستخرج قبل التحليل"):
-            st.text(resume_text[:3000])
-
-    run_button = st.button("🔍 شغّل الموديل واستخرج البيانات", type="primary", disabled=not resume_text)
-
-    if run_button and resume_text:
-        try:
-            tokenizer, model = load_model(MODEL_PATH)
-            with st.spinner("🧠 الموديل بيحلل السيرة الذاتية..."):
-                parsed_json = run_resume_extraction(tokenizer, model, resume_text)
-            st.session_state["_last_parsed"] = parsed_json
-            st.session_state["_last_parsed_source"] = resume_file_name
-            st.success("✅ تم استخراج البيانات بنجاح! راجعها تحت وأضفها للقائمة.")
-        except Exception as e:
-            st.error(f"⚠️ حصل خطأ أثناء تشغيل الموديل: {e}")
-
-    if st.session_state.get("_last_parsed"):
-        st.subheader("📋 خطوة 2: راجع البيانات (تقدر تعدّل قبل الإضافة)")
-        edited_json_str = st.text_area(
-            "بيانات المرشح (JSON) - تقدر تصلّح أي حاجة هنا",
-            value=json.dumps(st.session_state["_last_parsed"], ensure_ascii=False, indent=2),
-            height=300,
-        )
-
-        if st.button("➕ أضف المرشح ده لقائمة المطابقة"):
-            try:
-                parsed = json.loads(edited_json_str)
-                new_candidate = normalize_candidate(parsed, st.session_state["_last_parsed_source"])
-                st.session_state.model_candidates.append(new_candidate)
-                del st.session_state["_last_parsed"]
-                st.success(f"تمت إضافة {new_candidate['name']} لقائمة المرشحين. اختار مصدر بيانات تاني من الشمال عشان تشوف المطابقة، أو كمّل ضيف سير ذاتية زيادة.")
-                st.rerun()
-            except json.JSONDecodeError:
-                st.error("الـ JSON اللي في الصندوق مش صالح، راجع الصياغة.")
-
-    st.markdown("---")
-    st.info(
-        "💡 بعد ما تضيف سير ذاتية بالموديل، اختار "
-        "**'مجلد على السيرفر'** أو خلي القائمة الجانبية زي ما هي "
-        "وانزل تحت في قسم 'اختار السكيلز' عشان تشوف كل المرشحين (بما فيهم اللي ضفتهم دلوقتي) ومطابقتهم."
-    )
-
 if not candidates:
-    st.info("لا يوجد مرشحون محمّلون بعد. حلل سيرة ذاتية بالموديل، أو ارفع ملفات JSON، أو حدد مجلد صحيح من القائمة الجانبية.")
+    st.info("لا يوجد مرشحون محمّلون بعد. ارفع ملفات JSON أو حدد مجلد صحيح من القائمة الجانبية.")
     st.stop()
 
 # ابنِ قائمة موحّدة بكل السكيلز الموجودة عند كل المرشحين
