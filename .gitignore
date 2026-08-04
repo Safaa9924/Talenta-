@@ -1,7 +1,22 @@
+# بيانات حقيقية لمرشحين - متتبعتش على GitHub (خصوصية)
+data/outputs/*.json
+!data/outputs/sample_*.json
+
+# تقرير التقييم الحقيقي (بيتولد محليًا بعد full_evaluation.py)
+data/outputs/evaluation_report.json
+data/outputs/*.png
+
+# موديلات وملفات تدريب كبيرة (لو حطيتها في نفس الريبو)
+models/
+*.safetensors
+*.bin
+
+# Python
 __pycache__/
 *.pyc
-.streamlit/
+.venv/
+venv/
+
+# OS / Editor
 .DS_Store
-data/outputs/*.json
-*.bin
-*.safetensors
+.vscode/
