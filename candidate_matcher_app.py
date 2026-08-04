@@ -160,10 +160,9 @@ def run_resume_extraction(tokenizer, model, resume_text: str, max_new_tokens: in
 # -----------------------------------------------------------------------
 # Helpers: Loading & Normalizing candidate JSON records
 # -----------------------------------------------------------------------
-def _extract_list_of_strings(field: Any) -> List[str]:
+def _extract_skill_names(skills_field: Any) -> List[str]:
     """
-    حقول زي core_skills / secondary_skills / tools / previous_titles /
-    previous_companies / industries ممكن تيجي بأشكال مختلفة حسب النموذج:
+    السكيلز في الـ JSON ممكن تيجي بأشكال مختلفة حسب النموذج:
     - ["Python", "SQL", "AWS"]
     - [{"name": "Python", "level": "Advanced"}, ...]
     - "Python, SQL, AWS"  (نص واحد)
@@ -171,22 +170,22 @@ def _extract_list_of_strings(field: Any) -> List[str]:
     """
     names: List[str] = []
 
-    if field is None:
+    if skills_field is None:
         return names
 
-    if isinstance(field, str):
+    if isinstance(skills_field, str):
         # فصل بالفاصلة لو جاءت كنص واحد
-        parts = [p.strip() for p in field.split(",")]
+        parts = [p.strip() for p in skills_field.split(",")]
         return [p for p in parts if p]
 
-    if isinstance(field, dict):
+    if isinstance(skills_field, dict):
         # أحياناً بتيجي مقسمة لفئات: {"technical": [...], "soft": [...]}
-        for v in field.values():
-            names.extend(_extract_list_of_strings(v))
+        for v in skills_field.values():
+            names.extend(_extract_skill_names(v))
         return names
 
-    if isinstance(field, list):
-        for item in field:
+    if isinstance(skills_field, list):
+        for item in skills_field:
             if isinstance(item, str):
                 names.append(item.strip())
             elif isinstance(item, dict):
@@ -203,82 +202,37 @@ def _extract_list_of_strings(field: Any) -> List[str]:
 
 
 def normalize_candidate(raw: Dict[str, Any], source_name: str) -> Dict[str, Any]:
-    """
-    توحيد شكل ملف JSON الواحد لبروفايل موحّد، حسب الحقول اللي بيطلعها
-    الموديل فعليًا:
-        current_company, previous_companies, primary_domain,
-        leadership_experience, key_achievements, core_skills, location,
-        current_title, previous_titles, seniority, summary,
-        secondary_skills, tools, years_experience, industries
+    """توحيد شكل ملف JSON الواحد (مهما اختلفت أسماء المفاتيح) لبروفايل موحّد."""
+    name = (
+        raw.get("name")
+        or raw.get("candidate_name")
+        or raw.get("full_name")
+        or source_name
+    )
+    email = raw.get("email") or raw.get("contact", {}).get("email", "") if isinstance(raw.get("contact"), dict) else raw.get("email", "")
+    phone = raw.get("phone") or (raw.get("contact", {}).get("phone", "") if isinstance(raw.get("contact"), dict) else "")
+    seniority = raw.get("seniority") or raw.get("experience_level") or raw.get("level") or "Not specified"
 
-    ملاحظة: الموديل مبيطلعش اسم المرشح ولا بريده ولا رقم تليفونه، فبنستخدم
-    اسم الملف كمعرّف للعرض بدل الاسم.
-    """
-    display_name = os.path.splitext(source_name)[0]
+    skills_field = raw.get("skills") or raw.get("technical_skills") or raw.get("key_skills")
+    skills = _extract_skill_names(skills_field)
 
-    location = raw.get("location") or "Not specified"
-    seniority = raw.get("seniority") or "Not specified"
-    years_experience = raw.get("years_experience", "Not specified")
-    primary_domain = raw.get("primary_domain") or "Not specified"
-    summary = raw.get("summary") or ""
-    leadership_experience = raw.get("leadership_experience") or ""
-
-    current_title = raw.get("current_title") or "Not specified"
-    current_company = raw.get("current_company") or "Not specified"
-    previous_titles = _extract_list_of_strings(raw.get("previous_titles"))
-    previous_companies = _extract_list_of_strings(raw.get("previous_companies"))
-    industries = _extract_list_of_strings(raw.get("industries"))
-
-    core_skills = _extract_list_of_strings(raw.get("core_skills"))
-    secondary_skills = _extract_list_of_strings(raw.get("secondary_skills"))
-    tools = _extract_list_of_strings(raw.get("tools"))
-
-    key_achievements_field = raw.get("key_achievements")
-    if isinstance(key_achievements_field, list):
-        key_achievements = [str(a).strip() for a in key_achievements_field if a]
-    elif isinstance(key_achievements_field, str) and key_achievements_field.strip():
-        key_achievements = [key_achievements_field.strip()]
-    else:
-        key_achievements = []
-
-    # كل السكيلز مجمّعة (أساسية + إضافية + أدوات) عشان تستخدم في فلترة/مطابقة السكيلز
-    combined_skills: List[str] = []
-    seen_lower = set()
-    for s in core_skills + secondary_skills + tools:
-        if s and s.lower() not in seen_lower:
-            seen_lower.add(s.lower())
-            combined_skills.append(s)
+    experience = raw.get("experience") or raw.get("work_experience") or raw.get("employment_history") or []
+    education = raw.get("education") or raw.get("education_summary") or []
+    certifications = raw.get("certifications") or []
 
     return {
         "source_file": source_name,
-        "name": display_name,
-        "location": location,
+        "name": name,
+        "email": email or "N/A",
+        "phone": phone or "N/A",
         "seniority": seniority,
-        "years_experience": years_experience,
-        "primary_domain": primary_domain,
-        "industries": industries,
-        "current_title": current_title,
-        "current_company": current_company,
-        "previous_titles": previous_titles,
-        "previous_companies": previous_companies,
-        "core_skills": core_skills,
-        "secondary_skills": secondary_skills,
-        "tools": tools,
-        "skills": combined_skills,
-        "skills_lower": {s.lower() for s in combined_skills},
-        "leadership_experience": leadership_experience,
-        "key_achievements": key_achievements,
-        "summary": summary,
+        "skills": skills,
+        "skills_lower": {s.lower() for s in skills},
+        "experience": experience,
+        "education": education,
+        "certifications": certifications,
         "raw": raw,
     }
-
-
-def _years_experience_sort_key(value: Any) -> float:
-    """بيحاول يطلع رقم من قيمة سنوات الخبرة (ممكن تيجي 8 أو '8 years' أو نص مش رقمي)."""
-    if isinstance(value, (int, float)):
-        return float(value)
-    match = re.search(r"(\d+(\.\d+)?)", str(value)) if value is not None else None
-    return float(match.group(1)) if match else -1.0
 
 
 @st.cache_data(show_spinner=False)
@@ -453,74 +407,44 @@ with col_filters:
     seniority_options = sorted({c["seniority"] for c in candidates if c["seniority"]})
     seniority_filter = st.multiselect("فلترة حسب الخبرة/المستوى (اختياري)", seniority_options)
 
-    st.markdown("---")
-    summary_search = st.text_input(
-        "🔎 بحث نصي في النبذة (Summary)",
-        value="",
-        placeholder="مثال: fintech أو team lead",
-        help="هيفلتر المرشحين اللي كلمة البحث دي موجودة في النبذة (summary) بتاعتهم.",
-    )
-
-    sort_choice = st.radio(
-        "ترتيب النتائج حسب",
-        ["نسبة التطابق (الأعلى أولاً)", "سنوات الخبرة (الأعلى أولاً)"],
-        index=0,
-    )
-
 with col_results:
     st.subheader("📋 نتائج المطابقة")
 
-    if not selected_skills and not summary_search.strip():
-        st.info("اختار سكيل واحد على الأقل، أو استخدم البحث النصي في النبذة، عشان تظهر النتائج.")
+    if not selected_skills:
+        st.info("اختار سكيل واحد على الأقل من القائمة على اليسار عشان تظهر النتائج.")
     else:
         selected_lower = {s.lower() for s in selected_skills}
         results = []
 
         for c in candidates:
-            if selected_lower:
-                matched = c["skills_lower"] & selected_lower
-                if not matched:
-                    continue
-
-                if match_mode.startswith("لازم") and not selected_lower.issubset(c["skills_lower"]):
-                    continue
-
-                match_pct = round((len(matched) / len(selected_lower)) * 100, 1)
-                if match_pct < min_match_pct:
-                    continue
-            else:
-                # مفيش سكيلز متختارة، بنعتمد بس على البحث النصي/الفلاتر التانية
-                matched = set()
-                match_pct = None
-
-            if seniority_filter and c["seniority"] not in seniority_filter:
+            matched = c["skills_lower"] & selected_lower
+            if not matched:
                 continue
 
-            if summary_search.strip() and summary_search.strip().lower() not in (c["summary"] or "").lower():
+            if match_mode.startswith("لازم") and not selected_lower.issubset(c["skills_lower"]):
+                continue
+
+            match_pct = round((len(matched) / len(selected_lower)) * 100, 1)
+            if match_pct < min_match_pct:
+                continue
+
+            if seniority_filter and c["seniority"] not in seniority_filter:
                 continue
 
             results.append(
                 {
                     "الاسم": c["name"],
-                    "نسبة التطابق %": match_pct if match_pct is not None else "-",
-                    "المسمى الحالي": c["current_title"],
-                    "الشركة الحالية": c["current_company"],
-                    "السكيلز المتطابقة": ", ".join(sorted(matched)) if matched else "-",
+                    "نسبة التطابق %": match_pct,
+                    "السكيلز المتطابقة": ", ".join(sorted(matched)),
                     "كل السكيلز": ", ".join(c["skills"]),
                     "المستوى": c["seniority"],
-                    "سنوات الخبرة": c["years_experience"],
-                    "الموقع": c["location"],
+                    "البريد": c["email"],
+                    "الهاتف": c["phone"],
                     "الملف": c["source_file"],
                 }
             )
 
-        if sort_choice.startswith("سنوات"):
-            results.sort(key=lambda r: _years_experience_sort_key(r["سنوات الخبرة"]), reverse=True)
-        else:
-            results.sort(
-                key=lambda r: r["نسبة التطابق %"] if isinstance(r["نسبة التطابق %"], (int, float)) else -1,
-                reverse=True,
-            )
+        results.sort(key=lambda r: r["نسبة التطابق %"], reverse=True)
 
         if not results:
             st.warning("لا يوجد مرشحون مطابقون لهذه المعايير.")
@@ -539,42 +463,37 @@ with col_results:
             )
             if chosen_candidate:
                 with st.expander(f"البروفايل الكامل - {chosen_candidate['name']}", expanded=True):
-                    st.write(f"**المسمى الوظيفي الحالي:** {chosen_candidate['current_title']}")
-                    st.write(f"**الشركة الحالية:** {chosen_candidate['current_company']}")
-                    st.write(f"**الموقع:** {chosen_candidate['location']}")
+                    st.write(f"**البريد الإلكتروني:** {chosen_candidate['email']}")
+                    st.write(f"**الهاتف:** {chosen_candidate['phone']}")
                     st.write(f"**المستوى:** {chosen_candidate['seniority']}")
-                    st.write(f"**سنوات الخبرة:** {chosen_candidate['years_experience']}")
-                    st.write(f"**المجال الأساسي:** {chosen_candidate['primary_domain']}")
+                    st.write("**السكيلز:**", ", ".join(chosen_candidate["skills"]) or "غير محدد")
 
-                    if chosen_candidate["summary"]:
-                        st.write(f"**نبذة:** {chosen_candidate['summary']}")
-
-                    st.write("**السكيلز الأساسية:**", ", ".join(chosen_candidate["core_skills"]) or "غير محدد")
-                    st.write("**سكيلز إضافية:**", ", ".join(chosen_candidate["secondary_skills"]) or "غير محدد")
-                    st.write("**الأدوات:**", ", ".join(chosen_candidate["tools"]) or "غير محدد")
-                    st.write("**الصناعات:**", ", ".join(chosen_candidate["industries"]) or "غير محدد")
-
-                    st.write("**المسميات الوظيفية السابقة:**")
-                    if chosen_candidate["previous_titles"]:
-                        for t in chosen_candidate["previous_titles"]:
-                            st.write(f"- {t}")
+                    st.write("**الخبرات العملية:**")
+                    exp = chosen_candidate["experience"]
+                    if isinstance(exp, list) and exp:
+                        for job in exp:
+                            if isinstance(job, dict):
+                                role = job.get("title", job.get("role", "Position"))
+                                company = job.get("company", job.get("employer", "Company"))
+                                st.write(f"- {role} @ {company}")
+                            else:
+                                st.write(f"- {job}")
                     else:
-                        st.write("لا يوجد بيانات.")
+                        st.write("لا يوجد بيانات خبرة.")
 
-                    st.write("**الشركات السابقة:**")
-                    if chosen_candidate["previous_companies"]:
-                        for co in chosen_candidate["previous_companies"]:
-                            st.write(f"- {co}")
+                    st.write("**التعليم:**")
+                    edu = chosen_candidate["education"]
+                    if isinstance(edu, list) and edu:
+                        for e in edu:
+                            st.write(f"- {e}")
                     else:
-                        st.write("لا يوجد بيانات.")
+                        st.write("لا يوجد بيانات تعليم.")
 
-                    if chosen_candidate["leadership_experience"]:
-                        st.write(f"**خبرة قيادية:** {chosen_candidate['leadership_experience']}")
-
-                    if chosen_candidate["key_achievements"]:
-                        st.write("**أبرز الإنجازات:**")
-                        for ach in chosen_candidate["key_achievements"]:
-                            st.write(f"- {ach}")
+                    certs = chosen_candidate["certifications"]
+                    if certs:
+                        st.write("**الشهادات:**")
+                        for cert in certs:
+                            st.write(f"- {cert}")
 
                     st.download_button(
                         "⬇️ تحميل بيانات المرشح (JSON)",
