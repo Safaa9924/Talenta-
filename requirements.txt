@@ -1,9 +1,3 @@
-streamlit
-torch
-transformers
-peft
-accelerate
-pandas
-pypdf
-docx2txt
-huggingface_hub
+streamlit>=1.60.0
+plotly>=5.0.0
+pandas>=2.0.0
