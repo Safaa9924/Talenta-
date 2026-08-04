@@ -409,7 +409,7 @@ h1.metric("سير محتاجة مراجعة يدوية", f"{flagged_resumes:,.0f
 h2.metric("التكلفة الكلية (AI + مراجعة)", f"${hybrid_cost:,.2f}")
 h3.metric("التوفير الواقعي", f"${hybrid_savings:,.2f}", f"{hybrid_reduction_pct:.1f}%")
 
-# --- عرض تفاصيل التقييم الحقيقي لو موجودة (Per-field + Confusion) ---
+
 if real_metrics:
     with st.expander("📋 تفاصيل التقييم الحقيقي الكامل (Per-field breakdown + Confusion)"):
         st.write("**دقة كل حقل لوحده:**")
